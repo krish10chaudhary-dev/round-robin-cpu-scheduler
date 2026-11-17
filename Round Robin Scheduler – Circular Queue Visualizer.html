@@ -1,0 +1,246 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Round Robin Scheduler – Circular Queue Visualizer</title>
+<style>
+:root{--bg:#f7f8fa;--fg:#1c2128;--mut:#667085;--card:#fff;--bd:#dde1e7;--acc:#2563eb;color-scheme:light;
+box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#12151a;--fg:#e6e9ee;--mut:#98a2b3;--card:#1b2027;--bd:#2d343e;--acc:#6ea0ff;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#12151a;--fg:#e6e9ee;--mut:#98a2b3;--card:#1b2027;--bd:#2d343e;--acc:#6ea0ff;color-scheme:dark}
+html{scroll-padding-top:env(safe-area-inset-top,0px)}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.5 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+main{max-width:960px;margin:0 auto;padding:16px}
+h1{font-size:1.3rem;margin:0 0 2px}h2{font-size:1rem;margin:0 0 8px}
+.sub{color:var(--mut);margin:0 0 14px}
+.card{background:var(--card);border:1px solid var(--bd);border-radius:12px;padding:14px;margin-bottom:14px}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+@media(max-width:700px){.grid{grid-template-columns:1fr}}
+input{width:70px;padding:5px 7px;border:1px solid var(--bd);border-radius:6px;background:var(--bg);color:var(--fg);font:inherit}
+button{padding:7px 13px;border:1px solid var(--bd);border-radius:8px;background:var(--card);color:var(--fg);font:inherit;cursor:pointer}
+button.p{background:var(--acc);color:#fff;border-color:var(--acc)}
+button:disabled{opacity:.45;cursor:default}
+.row{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:6px 0}
+table{border-collapse:collapse;width:100%;font-size:.9rem}
+th,td{padding:5px 8px;text-align:left;border-bottom:1px solid var(--bd)}
+th{color:var(--mut);font-weight:600}
+.scroll{overflow-x:auto}
+.cpu{height:70px;border:2px dashed var(--bd);border-radius:12px;display:flex;align-items:center;justify-content:center;font-size:1.3rem;font-weight:700;color:#111}
+.msg{min-height:3em;color:var(--mut);margin-top:8px}
+.gantt{display:flex;padding-bottom:20px}
+.cell{height:38px;position:relative;display:flex;align-items:center;justify-content:center;font-size:.8rem;font-weight:700;color:#111;border-right:1px solid var(--bg);flex:none}
+.cell i{position:absolute;bottom:-18px;left:0;font:normal .7rem system-ui;color:var(--mut)}
+.bar{height:9px;border-radius:5px;background:var(--acc);display:inline-block;vertical-align:middle}
+.bar.r{background:#e8943a}
+.hl td{background:color-mix(in srgb,var(--acc) 14%,transparent)}
+.err{color:#d92d20;min-height:1.4em}
+.stats{display:flex;gap:18px;flex-wrap:wrap;font-size:.9rem}.stats b{display:block;font-size:1.15rem}
+</style>
+</head>
+<body>
+<main>
+<h1>Round Robin Scheduler · Circular Queue</h1>
+<p class="sub">Edit the processes, press Run, then step through the scheduler and watch the ring buffer wrap around.</p>
+
+<section class="card">
+  <h2>1 · Setup</h2>
+  <div class="scroll"><table id="ptab"></table></div>
+  <div class="row">
+    <button id="add">+ Add process</button>
+    <label>Quantum <input id="q" type="number" min="1" value="4"></label>
+    <label>Context-switch cost <input id="sc" type="number" min="0" value="1"></label>
+    <button class="p" id="run">Run</button>
+  </div>
+  <div class="err" id="err"></div>
+</section>
+
+<section class="grid">
+  <div class="card">
+    <h2>Circular queue (ready queue)</h2>
+    <svg id="ring" viewBox="0 0 270 270" width="100%" style="max-width:300px;display:block;margin:auto" role="img" aria-label="Circular queue"></svg>
+    <p class="sub" style="text-align:center;margin:4px 0 0">H = head (next out) · T = tail (next free slot)</p>
+  </div>
+  <div class="card">
+    <h2>CPU</h2>
+    <div class="cpu" id="cpu">idle</div>
+    <div class="msg" id="msg"></div>
+    <div class="row">
+      <button id="first">⏮</button><button id="prev">◀ Prev</button>
+      <button class="p" id="play">▶ Play</button>
+      <button id="next">Next ▶</button><button id="last">⏭</button>
+    </div>
+    <input id="slider" type="range" min="0" value="0" style="width:100%">
+    <div class="sub" id="stepinfo" style="margin:0"></div>
+  </div>
+</section>
+
+<section class="card">
+  <h2>Gantt chart</h2>
+  <div class="scroll"><div class="gantt" id="gantt"></div></div>
+</section>
+
+<section class="card">
+  <h2>Final results</h2>
+  <div class="scroll"><table id="res"></table></div>
+  <div class="stats" id="stats" style="margin-top:10px"></div>
+</section>
+
+<section class="card">
+  <h2>Quantum tradeoff</h2>
+  <p class="sub" style="margin-top:0">Same processes, every quantum from 1 to the longest burst. Small quantum: quick response but many switches. Large quantum: behaves like FCFS.</p>
+  <div class="scroll"><table id="sweep"></table></div>
+</section>
+</main>
+
+<script>
+const $ = s => document.querySelector(s);
+let procs = [{arrival:0,burst:10},{arrival:1,burst:4},{arrival:2,burst:6},{arrival:3,burst:3}];
+let R = null, idx = 0, timer = null;
+const col = p => p < 0 ? 'transparent' : 'hsl(' + ((p * 67) % 360) + ' 65% 62%)';
+
+/* ---------- simulation (same logic as the C++ version) ---------- */
+function simulate(list, Q, SC) {
+  const P = list.map((p, i) => ({pid: i + 1, arrival: p.arrival, burst: p.burst, rem: p.burst, first: -1, comp: 0}));
+  const n = P.length, order = [...P.keys()].sort((a, b) => P[a].arrival - P[b].arrival || a - b);
+  let ring = new Array(4).fill(null), head = 0, tail = 0, count = 0;
+  let t = 0, nx = 0, fin = 0, last = -1, sw = 0, idle = 0, ovh = 0;
+  const steps = [], g = [];
+  const snap = (msg, run = null) => steps.push({t, ring: ring.slice(), head, tail, count, run, msg, g: g.map(x => x.slice())});
+  const addSlice = (pid, s, e) => {
+    const l = g[g.length - 1];
+    if (l && l[0] === pid && l[2] === s) l[2] = e; else g.push([pid, s, e]);
+  };
+  const enq = (i, why) => {
+    let grew = '';
+    if (count === ring.length) {
+      const nr = new Array(ring.length * 2).fill(null);
+      for (let k = 0; k < count; k++) nr[k] = ring[(head + k) % ring.length];
+      ring = nr; head = 0; tail = count; grew = ' Queue was full, so it grew to ' + ring.length + ' slots.';
+    }
+    ring[tail] = i; tail = (tail + 1) % ring.length; count++;
+    snap(why + grew);
+  };
+  const admit = () => { while (nx < n && P[order[nx]].arrival <= t) { const i = order[nx++]; enq(i, 'P' + P[i].pid + ' arrives at t=' + P[i].arrival + ' and is enqueued.'); } };
+  snap('Start. Ready queue is empty.');
+  admit();
+  while (fin < n) {
+    if (count === 0) {
+      const to = P[order[nx]].arrival;
+      addSlice(-1, t, to); idle += to - t; t = to; last = -1;
+      snap('CPU idle until t=' + t + ' (no ready process).');
+      admit(); continue;
+    }
+    const i = ring[head]; ring[head] = null; head = (head + 1) % ring.length; count--;
+    const p = P[i];
+    let note = '';
+    if (last !== -1 && last !== p.pid) { sw++; if (SC > 0) { addSlice(-2, t, t + SC); t += SC; ovh += SC; note = ' (after a ' + SC + '-unit context switch)'; } }
+    last = p.pid;
+    if (p.first < 0) p.first = t;
+    const run = Math.min(Q, p.rem);
+    addSlice(p.pid, t, t + run);
+    snap('Dequeue P' + p.pid + ' from head. It runs t=' + t + ' → ' + (t + run) + note + '.', p.pid);
+    t += run; p.rem -= run;
+    admit();
+    if (p.rem > 0) enq(i, 'P' + p.pid + ' used its quantum (' + p.rem + ' left) and goes to the tail.');
+    else { p.comp = t; fin++; snap('P' + p.pid + ' finished at t=' + t + '.'); }
+  }
+  snap('All processes finished at t=' + t + '.');
+  return {P, steps, sw, total: t, idle, ovh};
+}
+const avg = r => {
+  let a = 0, w = 0, s = 0;
+  r.P.forEach(p => { const tat = p.comp - p.arrival; a += tat; w += tat - p.burst; s += p.first - p.arrival; });
+  const n = r.P.length; return {tat: a / n, wt: w / n, rt: s / n};
+};
+
+/* ---------- setup table ---------- */
+function drawSetup() {
+  $('#ptab').innerHTML = '<tr><th>PID</th><th>Arrival</th><th>Burst</th><th></th></tr>' + procs.map((p, i) =>
+    '<tr><td><span class="bar" style="width:14px;height:14px;background:' + col(i + 1) + '"></span> P' + (i + 1) + '</td>' +
+    '<td><input type="number" min="0" value="' + p.arrival + '" data-i="' + i + '" data-k="arrival"></td>' +
+    '<td><input type="number" min="1" value="' + p.burst + '" data-i="' + i + '" data-k="burst"></td>' +
+    '<td><button data-del="' + i + '">✕</button></td></tr>').join('');
+}
+$('#ptab').addEventListener('input', e => { const d = e.target.dataset; if (d.k) procs[d.i][d.k] = parseInt(e.target.value, 10); });
+$('#ptab').addEventListener('click', e => { const d = e.target.dataset.del; if (d !== undefined && procs.length > 1) { procs.splice(+d, 1); drawSetup(); } });
+$('#add').onclick = () => { if (procs.length < 12) { procs.push({arrival: 0, burst: 5}); drawSetup(); } };
+
+/* ---------- rendering ---------- */
+function render() {
+  const s = R.steps[idx], cap = s.ring.length;
+  let svg = '<circle cx="135" cy="135" r="86" fill="none" stroke="var(--bd)" stroke-width="2"/>';
+  for (let i = 0; i < cap; i++) {
+    const a = (-90 + i * 360 / cap) * Math.PI / 180, x = 135 + 86 * Math.cos(a), y = 135 + 86 * Math.sin(a);
+    const v = s.ring[i], tag = (i === s.head ? 'H' : '') + (i === s.tail ? 'T' : '');
+    svg += '<circle cx="' + x + '" cy="' + y + '" r="19" fill="' + (v !== null ? col(v + 1) : 'var(--card)') + '" stroke="var(--bd)" stroke-width="2"/>' +
+      '<text x="' + x + '" y="' + (y + 5) + '" text-anchor="middle" font-size="14" font-weight="700" fill="' + (v !== null ? '#111' : 'var(--mut)') + '">' + (v !== null ? 'P' + (v + 1) : '·') + '</text>' +
+      '<text x="' + (135 + 118 * Math.cos(a)) + '" y="' + (135 + 118 * Math.sin(a) + 4) + '" text-anchor="middle" font-size="11" fill="var(--mut)">[' + i + ']</text>';
+    if (tag) svg += '<text x="' + (135 + 58 * Math.cos(a)) + '" y="' + (135 + 58 * Math.sin(a) + 5) + '" text-anchor="middle" font-size="14" font-weight="700" fill="var(--acc)">' + tag + '</text>';
+  }
+  svg += '<text x="135" y="132" text-anchor="middle" font-size="12" fill="var(--mut)">size ' + s.count + '/' + cap + '</text><text x="135" y="150" text-anchor="middle" font-size="12" fill="var(--mut)">t = ' + s.t + '</text>';
+  $('#ring').innerHTML = svg;
+
+  const cpu = $('#cpu');
+  cpu.textContent = s.run ? 'P' + s.run : 'idle'; cpu.style.background = s.run ? col(s.run) : 'transparent';
+  $('#msg').textContent = s.msg;
+  $('#slider').max = R.steps.length - 1; $('#slider').value = idx;
+  $('#stepinfo').textContent = 'Step ' + idx + ' of ' + (R.steps.length - 1);
+  $('#first').disabled = $('#prev').disabled = idx === 0;
+  $('#last').disabled = $('#next').disabled = idx === R.steps.length - 1;
+
+  $('#gantt').innerHTML = s.g.map(x => {
+    const bg = x[0] === -1 ? 'var(--bd)' : x[0] === -2 ? 'repeating-linear-gradient(45deg,var(--bd),var(--bd) 4px,transparent 4px,transparent 8px)' : col(x[0]);
+    return '<div class="cell" style="width:' + Math.max(34, (x[2] - x[1]) * 14) + 'px;background:' + bg + '">' + (x[0] > 0 ? 'P' + x[0] : x[0] === -1 ? 'idle' : '') + '<i>' + x[1] + '</i></div>';
+  }).join('') + (s.g.length ? '<div class="cell" style="width:30px;border:0"><i>' + s.g[s.g.length - 1][2] + '</i></div>' : '');
+}
+
+function drawResults() {
+  $('#res').innerHTML = '<tr><th>PID</th><th>Arrival</th><th>Burst</th><th>Completion</th><th>Turnaround</th><th>Waiting</th><th>Response</th></tr>' +
+    R.P.map(p => { const tat = p.comp - p.arrival; return '<tr><td>P' + p.pid + '</td><td>' + p.arrival + '</td><td>' + p.burst + '</td><td>' + p.comp + '</td><td>' + tat + '</td><td>' + (tat - p.burst) + '</td><td>' + (p.first - p.arrival) + '</td></tr>'; }).join('');
+  const a = avg(R), util = 100 * (R.total - R.idle - R.ovh) / R.total;
+  $('#stats').innerHTML = [['Avg turnaround', a.tat.toFixed(2)], ['Avg waiting', a.wt.toFixed(2)], ['Avg response', a.rt.toFixed(2)],
+    ['Context switches', R.sw], ['CPU utilisation', util.toFixed(1) + '%'], ['Throughput', (R.P.length / R.total).toFixed(3) + '/unit']]
+    .map(x => '<div>' + x[0] + '<b>' + x[1] + '</b></div>').join('');
+}
+
+function drawSweep(Q, SC) {
+  const mx = Math.max(...procs.map(p => p.burst)), rows = [];
+  for (let q = 1; q <= mx; q++) { const r = simulate(procs, q, SC), a = avg(r); rows.push({q, a, sw: r.sw, u: 100 * (r.total - r.idle - r.ovh) / r.total}); }
+  const mw = Math.max(...rows.map(r => Math.max(r.a.wt, r.a.rt))) || 1;
+  $('#sweep').innerHTML = '<tr><th>Quantum</th><th>Avg waiting</th><th>Avg response</th><th>Switches</th><th>CPU util</th></tr>' +
+    rows.map(r => '<tr class="' + (r.q === Q ? 'hl' : '') + '"><td>' + r.q + '</td>' +
+      '<td><span class="bar" style="width:' + (r.a.wt / mw * 90) + 'px"></span> ' + r.a.wt.toFixed(1) + '</td>' +
+      '<td><span class="bar r" style="width:' + (r.a.rt / mw * 90) + 'px"></span> ' + r.a.rt.toFixed(1) + '</td>' +
+      '<td>' + r.sw + '</td><td>' + r.u.toFixed(1) + '%</td></tr>').join('');
+}
+
+/* ---------- controls ---------- */
+function stop() { clearInterval(timer); timer = null; $('#play').textContent = '▶ Play'; }
+function go(i) { idx = Math.max(0, Math.min(R.steps.length - 1, i)); render(); }
+$('#run').onclick = () => {
+  stop();
+  const Q = parseInt($('#q').value, 10), SC = parseInt($('#sc').value, 10);
+  if (procs.some(p => !(p.arrival >= 0) || !(p.burst >= 1))) return $('#err').textContent = 'Arrival must be 0 or more and burst at least 1.';
+  if (!(Q >= 1) || !(SC >= 0)) return $('#err').textContent = 'Quantum must be at least 1 and switch cost 0 or more.';
+  $('#err').textContent = '';
+  R = simulate(procs, Q, SC); idx = 0; render(); drawResults(); drawSweep(Q, SC);
+};
+$('#first').onclick = () => { stop(); go(0); };
+$('#last').onclick = () => { stop(); go(1e9); };
+$('#prev').onclick = () => { stop(); go(idx - 1); };
+$('#next').onclick = () => { stop(); go(idx + 1); };
+$('#slider').oninput = e => { stop(); go(+e.target.value); };
+$('#play').onclick = () => {
+  if (timer) return stop();
+  if (idx === R.steps.length - 1) go(0);
+  $('#play').textContent = '⏸ Pause';
+  timer = setInterval(() => { if (idx >= R.steps.length - 1) stop(); else go(idx + 1); }, 800);
+};
+
+drawSetup();
+$('#run').click();
+</script>
+</body>
+</html>
